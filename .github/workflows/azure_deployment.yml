@@ -1,0 +1,125 @@
+name: safebank-infra
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+  push:
+      branches:
+        - 'main'
+
+env:
+
+  DOCKER_REGISTRY_SERVER_URL: glopopcr.azurecr.io
+  KEY_VAULT_NAME: glopop-kv
+  IMAGE_NAME: glopop-dockerimg
+  APP_SERVICE_NAME: glopop-appservice
+
+  RESOURCE_GROUP_DEV: BCSAI2024-DEVOPS-STUDENTS-A-DEV
+  SUBSCRIPTION_ID_DEV: e0b9cada-61bc-4b5a-bd7a-52c606726b3b
+
+  USER_ALIAS: glopop
+
+jobs:
+  build-infra:
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout code
+      - uses: actions/checkout@main
+      # Lint Bicep code 
+      - name: Run Bicep linter
+        run: az bicep build --file ./main.bicep
+      
+      - name: Upload Bicep build artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: bicep-build
+          path: ./main.bicep 
+      
+        # Checkout the repository to the runner.
+      - name: Checkout
+        uses: actions/checkout@v3
+
+
+  deploy-infra:
+    runs-on: ubuntu-latest
+    needs: build-infra
+
+    steps:
+
+    - uses: actions/checkout@main
+  
+    - name: Download Bicep build artifact
+      uses: actions/download-artifact@v3
+      with:
+          name: bicep-build
+    
+      # Log into Azure
+    - uses: azure/login@v2
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: deploy
+      uses: azure/arm-deploy@v2
+      with:
+        subscriptionId: ${{ env.SUBSCRIPTION_ID_DEV }}
+        resourceGroupName: ${{ env.RESOURCE_GROUP_DEV }}
+        template: ./main.bicep
+        parameters: >
+          ./parameters.bicepparam
+
+
+  build-push-image:
+    runs-on: ubuntu-latest
+    needs: deploy-infra
+    outputs:
+      image-version: ${{ steps.image-version.outputs.version }}
+
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Log in to azure"
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: "Get container registry credentials from vault"
+        run: |
+          REGISTRY_USERNAME=$(az keyvault secret show --name glopop-cr-username --vault-name ${{ env.KEY_VAULT_NAME }} --query value -o tsv)
+          REGISTRY_PASSWORD=$(az keyvault secret show --name glopop-cr-password0 --vault-name ${{ env.KEY_VAULT_NAME }} --query value -o tsv)
+          echo "REGISTRY_USERNAME=${REGISTRY_USERNAME}" >> $GITHUB_ENV
+          echo "REGISTRY_PASSWORD=${REGISTRY_PASSWORD}" >> $GITHUB_ENV
+
+      - name: "Set image version"
+        id: image-version
+        run: |
+          echo "version=$(date +'%Y.%m.%d.%H.%M')" >> $GITHUB_OUTPUT
+
+      - name: "Print images"
+        run: |
+          echo "Images"
+          docker images
+
+      - name: "Docker build and push image"
+        run: |
+          docker build -t ${{ env.DOCKER_REGISTRY_SERVER_URL }}/${{ env.IMAGE_NAME}}:${{ steps.image-version.outputs.version}} .
+          docker login ${{ env.DOCKER_REGISTRY_SERVER_URL }} -u ${{ env.REGISTRY_USERNAME }} -p ${{ env.REGISTRY_PASSWORD }}
+          docker push ${{ env.DOCKER_REGISTRY_SERVER_URL }}/${{ env.IMAGE_NAME}}:${{ steps.image-version.outputs.version}}
+
+  deploy-container:
+    runs-on: ubuntu-latest
+    needs: build-push-image
+    steps:
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Deploy Docker Image to Azure Web App
+      uses: azure/webapps-deploy@v3
+      with:
+        app-name: ${{ env.APP_SERVICE_NAME }}
+        images: |
+          ${{ env.DOCKER_REGISTRY_SERVER_URL }}/${{ env.IMAGE_NAME }}:${{ needs.build-push-image.outputs.image-version }}
