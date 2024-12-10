@@ -5,7 +5,7 @@ param location string = resourceGroup().location
 // App Service Plan
 param appServicePlanName string 
 
-module appServicePlan 'modules/app-service-plan.bicep' = {
+module appServicePlan 'modules/appServicePlan.bicep' = {
   name: 'appServicePlan-${userAlias}'
   params: {
     name: appServicePlanName
@@ -17,7 +17,7 @@ module appServicePlan 'modules/app-service-plan.bicep' = {
 param keyVaultName string
 param keyVaultRoleAssignments array
 
-module keyVault 'modules/key-vault.bicep' = {
+module keyvault 'modules/keyvault.bicep' = {
   name: 'keyVault-${userAlias}'
   params: {
     name: keyVaultName
@@ -32,12 +32,12 @@ param containerRegistryUsernameSecretName string
 param containerRegistryPassword0SecretName string 
 param containerRegistryPassword1SecretName string 
 
-module containerRegistry 'modules/container-registry.bicep' = {
+module acr 'modules/acr.bicep' = {
   name: 'containerRegistry-${userAlias}'
   params: {
     name: containerRegistryName
     location: location
-    keyVaultResourceId: keyVault.outputs.keyVaultId
+    keyVaultResourceId: keyvault.outputs.keyVaultId
     usernameSecretName: containerRegistryUsernameSecretName
     password0SecretName: containerRegistryPassword0SecretName
     password1SecretName: containerRegistryPassword1SecretName
@@ -53,7 +53,7 @@ resource keyVaultReference 'Microsoft.KeyVault/vaults@2023-07-01'existing = {
   name: keyVaultName
 }
 
-module containerAppService 'modules/container-appservice.bicep' = {
+module webApp 'modules/webApp.bicep' = {
   name: 'containerAppService-${userAlias}'
   params: {
     name: containerName
