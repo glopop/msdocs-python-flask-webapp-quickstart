@@ -1,4 +1,4 @@
-name: safebank-infra
+name: gloriacr
 
 on:
   workflow_dispatch:
